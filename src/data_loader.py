@@ -1,10 +1,8 @@
-
 import os
 import numpy as np
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.applications.efficientnet import preprocess_input
 from sklearn.model_selection import train_test_split
-import tensorflow as tf
 
 
 class PlantDiseaseDataLoader:
@@ -29,15 +27,12 @@ class PlantDiseaseDataLoader:
     def create_data_generators(self):
         """
         Create training and validation data generators with augmentation.
-
-        Returns:
-            train_generator: Training data generator
-            val_generator: Validation data generator
-            class_names: List of class names
+        Uses EfficientNet preprocessing.
         """
-        # Training data augmentation
+
+        # TRAIN: augmentation + EfficientNet preprocessing
         train_datagen = ImageDataGenerator(
-            rescale=1. / 255,
+            preprocessing_function=preprocess_input,
             rotation_range=20,
             width_shift_range=0.2,
             height_shift_range=0.2,
@@ -45,16 +40,15 @@ class PlantDiseaseDataLoader:
             zoom_range=0.2,
             horizontal_flip=True,
             fill_mode='nearest',
-            validation_split=self.validation_split
+            validation_split=self.validation_split,
         )
 
-        # Validation data (only rescaling)
+        # VAL: ONLY preprocessing (no augmentation)
         val_datagen = ImageDataGenerator(
-            rescale=1. / 255,
-            validation_split=self.validation_split
+            preprocessing_function=preprocess_input,
+            validation_split=self.validation_split,
         )
 
-        # Create training generator
         train_generator = train_datagen.flow_from_directory(
             self.data_dir,
             target_size=(self.img_size, self.img_size),
@@ -62,10 +56,9 @@ class PlantDiseaseDataLoader:
             class_mode='categorical',
             subset='training',
             shuffle=True,
-            seed=42
+            seed=42,
         )
 
-        # Create validation generator
         val_generator = val_datagen.flow_from_directory(
             self.data_dir,
             target_size=(self.img_size, self.img_size),
@@ -73,24 +66,31 @@ class PlantDiseaseDataLoader:
             class_mode='categorical',
             subset='validation',
             shuffle=False,
-            seed=42
+            seed=42,
         )
 
         self.class_names = list(train_generator.class_indices.keys())
+
+        print(f"\n{'=' * 70}")
+        print("DATA LOADING SUMMARY")
+        print(f"{'=' * 70}")
+        print(f"Training samples:    {train_generator.samples}")
+        print(f"Validation samples:  {val_generator.samples}")
+        print(f"Number of classes:   {len(self.class_names)}")
+        print(f"Image size:          {self.img_size}x{self.img_size}")
+        print(f"Batch size:          {self.batch_size}")
+        print("Preprocessing:       EfficientNet (ImageNet normalization)")
+        print(f"{'=' * 70}\n")
 
         return train_generator, val_generator, self.class_names
 
     def create_test_generator(self, test_dir):
         """
-        Create test data generator.
-
-        Args:
-            test_dir: Path to test dataset directory
-
-        Returns:
-            test_generator: Test data generator
+        Create test generator with proper preprocessing only.
         """
-        test_datagen = ImageDataGenerator(rescale=1. / 255)
+        test_datagen = ImageDataGenerator(
+            preprocessing_function=preprocess_input
+        )
 
         test_generator = test_datagen.flow_from_directory(
             test_dir,
@@ -104,61 +104,48 @@ class PlantDiseaseDataLoader:
 
     def get_class_weights(self, train_generator):
         """
-        Calculate class weights for imbalanced datasets.
-
-        Args:
-            train_generator: Training data generator
-
-        Returns:
-            class_weights: Dictionary of class weights
+        Compute class weights so rare classes get up-weighted.
         """
         from sklearn.utils.class_weight import compute_class_weight
 
-        # Get class labels
         classes = np.unique(train_generator.classes)
 
-        # Compute class weights
         class_weights_values = compute_class_weight(
-            'balanced',
+            class_weight='balanced',
             classes=classes,
             y=train_generator.classes
         )
 
         class_weights = dict(zip(classes, class_weights_values))
 
+        print(f"\nClass weights computed for {len(classes)} classes")
+        print("Top 5 most weighted classes:")
+        sorted_weights = sorted(
+            class_weights.items(), key=lambda x: x[1], reverse=True
+        )[:5]
+        for class_idx, weight in sorted_weights:
+            class_name = list(train_generator.class_indices.keys())[class_idx]
+            print(f"  {class_name}: {weight:.3f}")
+
         return class_weights
 
 
 def preprocess_single_image(img_path, img_size=224):
     """
-    Preprocess a single image for prediction.
-
-    Args:
-        img_path: Path to image file
-        img_size: Target image size
-
-    Returns:
-        Preprocessed image array
+    Load a single image and preprocess it for EfficientNet inference.
     """
     from tensorflow.keras.preprocessing import image
 
     img = image.load_img(img_path, target_size=(img_size, img_size))
     img_array = image.img_to_array(img)
-    img_array = img_array / 255.0
+    img_array = preprocess_input(img_array)
     img_array = np.expand_dims(img_array, axis=0)
-
     return img_array
 
 
 def get_dataset_statistics(data_dir):
     """
-    Get statistics about the dataset.
-
-    Args:
-        data_dir: Path to dataset directory
-
-    Returns:
-        Dictionary with dataset statistics
+    Count classes and images per class so we can sanity check the dataset.
     """
     stats = {
         'total_images': 0,
@@ -168,41 +155,24 @@ def get_dataset_statistics(data_dir):
     }
 
     if not os.path.exists(data_dir):
+        print(f"Warning: Directory {data_dir} does not exist!")
         return stats
 
-    classes = sorted([d for d in os.listdir(data_dir)
-                      if os.path.isdir(os.path.join(data_dir, d))])
+    classes = sorted([
+        d for d in os.listdir(data_dir)
+        if os.path.isdir(os.path.join(data_dir, d))
+    ])
 
     stats['num_classes'] = len(classes)
     stats['classes'] = classes
 
     for class_name in classes:
         class_path = os.path.join(data_dir, class_name)
-        num_images = len([f for f in os.listdir(class_path)
-                          if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        num_images = len([
+            f for f in os.listdir(class_path)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ])
         stats['class_distribution'][class_name] = num_images
         stats['total_images'] += num_images
 
     return stats
-
-
-if __name__ == "__main__":
-    # Example usage
-    data_dir = "data/PlantVillage"
-
-    # Get dataset statistics
-    stats = get_dataset_statistics(data_dir)
-    print(f"Dataset Statistics:")
-    print(f"Total Images: {stats['total_images']}")
-    print(f"Number of Classes: {stats['num_classes']}")
-    print(f"\nClass Distribution:")
-    for class_name, count in sorted(stats['class_distribution'].items()):
-        print(f"  {class_name}: {count}")
-
-    # Create data loaders
-    loader = PlantDiseaseDataLoader(data_dir)
-    train_gen, val_gen, class_names = loader.create_data_generators()
-
-    print(f"\nTraining samples: {train_gen.samples}")
-    print(f"Validation samples: {val_gen.samples}")
-    print(f"Classes: {len(class_names)}")
