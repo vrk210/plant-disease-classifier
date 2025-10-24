@@ -1,233 +1,291 @@
-
-
 import os
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from sklearn.metrics import classification_report, confusion_matrix
 
-from data_preprocessing import PlantDiseaseDataLoader
-
-
-def load_config(config_path='models/training_config.json'):
-    """Load training configuration."""
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-    return config
+from data_loader import PlantDiseaseDataLoader
 
 
 def plot_confusion_matrix(y_true, y_pred, class_names, save_path='models'):
     """
-    Plot and save confusion matrix.
-
-    Args:
-        y_true: True labels
-        y_pred: Predicted labels
-        class_names: List of class names
-        save_path: Directory to save plot
+    Plot and save confusion matrices (raw counts + normalized).
     """
     cm = confusion_matrix(y_true, y_pred)
 
-    # Plot full confusion matrix
+    # 1. Raw confusion matrix
     plt.figure(figsize=(20, 18))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=class_names, yticklabels=class_names,
-                cbar_kws={'label': 'Count'})
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt='d',
+        cmap='Blues',
+        xticklabels=class_names,
+        yticklabels=class_names,
+        cbar_kws={'label': 'Count'}
+    )
     plt.title('Confusion Matrix', fontsize=16, pad=20)
     plt.xlabel('Predicted Label', fontsize=12)
     plt.ylabel('True Label', fontsize=12)
     plt.xticks(rotation=90, ha='right')
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'confusion_matrix.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(
+        os.path.join(save_path, 'confusion_matrix.png'),
+        dpi=300,
+        bbox_inches='tight'
+    )
     plt.close()
 
-    # Plot normalized confusion matrix
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    # 2. Normalized confusion matrix (per-row accuracy)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
 
     plt.figure(figsize=(20, 18))
-    sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
-                xticklabels=class_names, yticklabels=class_names,
-                cbar_kws={'label': 'Proportion'})
+    sns.heatmap(
+        cm_normalized,
+        annot=True,
+        fmt='.2f',
+        cmap='Blues',
+        xticklabels=class_names,
+        yticklabels=class_names,
+        cbar_kws={'label': 'Proportion'}
+    )
     plt.title('Normalized Confusion Matrix', fontsize=16, pad=20)
     plt.xlabel('Predicted Label', fontsize=12)
     plt.ylabel('True Label', fontsize=12)
     plt.xticks(rotation=90, ha='right')
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'confusion_matrix_normalized.png'),
-                dpi=300, bbox_inches='tight')
+    plt.savefig(
+        os.path.join(save_path, 'confusion_matrix_normalized.png'),
+        dpi=300,
+        bbox_inches='tight'
+    )
     plt.close()
 
-    print(f"Confusion matrices saved to {save_path}")
+    print(f"✓ Confusion matrices saved to {save_path}")
 
 
 def plot_per_class_accuracy(y_true, y_pred, class_names, save_path='models'):
     """
-    Plot per-class accuracy.
-
-    Args:
-        y_true: True labels
-        y_pred: Predicted labels
-        class_names: List of class names
-        save_path: Directory to save plot
+    Plot per-class accuracy and return per-class accuracy array.
     """
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred)  # shape [num_classes, num_classes]
     per_class_accuracy = cm.diagonal() / cm.sum(axis=1)
 
-    # Sort by accuracy
+    # Sort classes by accuracy (lowest first)
     sorted_indices = np.argsort(per_class_accuracy)
     sorted_classes = [class_names[i] for i in sorted_indices]
-    sorted_accuracies = per_class_accuracy[sorted_indices]
+    sorted_acc = per_class_accuracy[sorted_indices]
 
     plt.figure(figsize=(12, 14))
-    colors = ['red' if acc < 0.8 else 'orange' if acc < 0.9 else 'green'
-              for acc in sorted_accuracies]
-    plt.barh(range(len(sorted_classes)), sorted_accuracies, color=colors, alpha=0.7)
+    colors = [
+        ('red' if acc < 0.8 else ('orange' if acc < 0.9 else 'green'))
+        for acc in sorted_acc
+    ]
+    plt.barh(
+        range(len(sorted_classes)),
+        sorted_acc,
+        color=colors,
+        alpha=0.7
+    )
     plt.yticks(range(len(sorted_classes)), sorted_classes)
     plt.xlabel('Accuracy', fontsize=12)
     plt.title('Per-Class Accuracy', fontsize=14, pad=20)
-    plt.axvline(x=0.9, color='blue', linestyle='--', alpha=0.5, label='90% threshold')
+    plt.axvline(
+        x=0.9,
+        color='blue',
+        linestyle='--',
+        alpha=0.5,
+        label='90% threshold'
+    )
     plt.legend()
     plt.grid(axis='x', alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'per_class_accuracy.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(
+        os.path.join(save_path, 'per_class_accuracy.png'),
+        dpi=300,
+        bbox_inches='tight'
+    )
     plt.close()
 
-    print(f"Per-class accuracy plot saved to {save_path}")
-
+    print(f"✓ Per-class accuracy plot saved to {save_path}")
     return per_class_accuracy
 
 
-def plot_sample_predictions(model, generator, class_names, num_samples=16, save_path='models'):
+def plot_sample_predictions(model, generator, class_names,
+                            num_samples=16, save_path='models'):
     """
-    Plot sample predictions with images.
-
-    Args:
-        model: Trained model
-        generator: Data generator
-        class_names: List of class names
-        num_samples: Number of samples to display
-        save_path: Directory to save plot
+    Show a grid of model predictions on a batch from the generator.
+    Color title green if correct, red if wrong.
     """
-    # Get a batch of images
+    # Get one batch
     images, labels = next(generator)
-    predictions = model.predict(images)
+    preds = model.predict(images)
 
-    # Select random samples
-    indices = np.random.choice(len(images), min(num_samples, len(images)), replace=False)
+    # Random subset
+    n = min(num_samples, len(images), 16)
+    idxs = np.random.choice(len(images), n, replace=False)
 
-    # Plot
-    fig, axes = plt.subplots(4, 4, figsize=(16, 16))
+    rows = 4
+    cols = 4
+    fig, axes = plt.subplots(rows, cols, figsize=(16, 16))
     axes = axes.ravel()
 
-    for idx, i in enumerate(indices):
-        if idx >= 16:
-            break
+    for plot_i, img_i in enumerate(idxs):
+        ax = axes[plot_i]
 
-        axes[idx].imshow(images[i])
+        true_idx = np.argmax(labels[img_i])
+        pred_idx = np.argmax(preds[img_i])
+        true_label = class_names[true_idx]
+        pred_label = class_names[pred_idx]
+        confidence = float(np.max(preds[img_i])) * 100.0
 
-        true_label = class_names[np.argmax(labels[i])]
-        pred_label = class_names[np.argmax(predictions[i])]
-        confidence = np.max(predictions[i]) * 100
+        ax.imshow(images[img_i] / 255.0)  # generator may have preprocessed images already;
+                                          # if it's already in EfficientNet space you might skip `/255.0`
+        title_color = 'green' if (true_idx == pred_idx) else 'red'
+        ax.set_title(
+            f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.1f}%",
+            fontsize=8,
+            color=title_color
+        )
+        ax.axis('off')
 
-        color = 'green' if true_label == pred_label else 'red'
-        axes[idx].set_title(f'True: {true_label}\nPred: {pred_label}\nConf: {confidence:.1f}%',
-                            fontsize=8, color=color)
-        axes[idx].axis('off')
+    # Hide any unused subplots if n < 16
+    for j in range(plot_i + 1, rows * cols):
+        axes[j].axis('off')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'sample_predictions.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(
+        os.path.join(save_path, 'sample_predictions.png'),
+        dpi=300,
+        bbox_inches='tight'
+    )
     plt.close()
 
-    print(f"Sample predictions plot saved to {save_path}")
+    print(f"✓ Sample predictions plot saved to {save_path}")
 
 
-def evaluate_model(model_path='models/best_model.h5',
-                   data_dir='data/PlantVillage',
-                   config_path='models/training_config.json'):
+def evaluate_model(
+    model_path='models/final_model.h5',
+    class_names_path='models/class_names.json',
+    data_dir='data/PlantVillage',
+    img_size=224,
+    batch_size=32,
+    validation_split=0.2,
+    save_path='models'
+):
     """
-    Evaluate trained model and generate comprehensive reports.
-
-    Args:
-        model_path: Path to saved model
-        data_dir: Path to dataset
-        config_path: Path to training configuration
+    Full evaluation:
+    - loads the trained model
+    - rebuilds the validation generator (same preprocessing)
+    - reports accuracy / top-3 accuracy
+    - saves confusion matrix, per-class accuracy, and sample predictions
+    - writes a classification_report.txt
     """
+
     print("=" * 70)
     print("MODEL EVALUATION")
     print("=" * 70)
 
-    # Load configuration
-    print("\n[1/6] Loading configuration...")
-    config_data = load_config(config_path)
-    class_names = config_data['class_names']
-    img_size = config_data['config']['img_size']
-    batch_size = config_data['config']['batch_size']
+    # Ensure output dir
+    os.makedirs(save_path, exist_ok=True)
 
-    print(f"Number of classes: {len(class_names)}")
-    print(f"Image size: {img_size}")
+    # 1. Load class names
+    print("\n[1/6] Loading class names...")
+    with open(class_names_path, 'r') as f:
+        class_names = json.load(f)
+    num_classes = len(class_names)
+    print(f"✓ Loaded {num_classes} classes")
 
-    # Load model
+    # 2. Load trained model
     print("\n[2/6] Loading trained model...")
-    model = load_model(model_path)
-    print(f"Model loaded from: {model_path}")
+    model = tf.keras.models.load_model(model_path)
+    print(f"✓ Model loaded from: {model_path}")
 
-    # Load validation data
-    print("\n[3/6] Loading validation data...")
-    data_loader = PlantDiseaseDataLoader(
+    # 3. Build validation generator using same preprocessing
+    print("\n[3/6] Building validation generator...")
+    loader = PlantDiseaseDataLoader(
         data_dir=data_dir,
         img_size=img_size,
         batch_size=batch_size,
-        validation_split=config_data['config']['validation_split']
+        validation_split=validation_split
     )
-    _, val_generator, _ = data_loader.create_data_generators()
+    # We only care about validation split here
+    _, val_generator, _ = loader.create_data_generators()
 
-    # Evaluate on validation set
-    print("\n[4/6] Evaluating model...")
+    # 4. Evaluate model quantitatively
+    print("\n[4/6] Evaluating model on validation data...")
     results = model.evaluate(val_generator, verbose=1)
 
-    print(f"\nValidation Loss: {results[0]:.4f}")
-    print(f"Validation Accuracy: {results[1]:.4f}")
-    if len(results) > 2:
-        print(f"Top-3 Accuracy: {results[2]:.4f}")
+    # results: [loss, acc, top_3_acc] if compiled with those metrics
+    val_loss = results[0]
+    val_acc = results[1]
+    top3_acc = results[2] if len(results) > 2 else None
 
-    # Get predictions
+    print(f"\nValidation Loss:      {val_loss:.4f}")
+    print(f"Validation Accuracy:  {val_acc:.4f} ({val_acc*100:.2f}%)")
+    if top3_acc is not None:
+        print(f"Top-3 Accuracy:       {top3_acc:.4f} ({top3_acc*100:.2f}%)")
+
+    # 5. Predictions for report + confusion matrix
     print("\n[5/6] Generating predictions...")
     y_pred_probs = model.predict(val_generator, verbose=1)
-    y_pred = np.argmax(y_pred_probs, axis=1)
-    y_true = val_generator.classes
+    y_pred = np.argmax(y_pred_probs, axis=1)  # predicted class idx
+    y_true = val_generator.classes            # true class idxs from generator
 
     # Classification report
-    print("\n[6/6] Generating evaluation reports...")
     print("\nClassification Report:")
     print("=" * 70)
-    report = classification_report(y_true, y_pred, target_names=class_names, digits=4)
-    print(report)
+    report_text = classification_report(
+        y_true,
+        y_pred,
+        target_names=class_names,
+        digits=4
+    )
+    print(report_text)
 
-    # Save classification report
-    report_path = os.path.join('models', 'classification_report.txt')
+    # Save classification report to disk
+    report_path = os.path.join(save_path, 'classification_report.txt')
     with open(report_path, 'w') as f:
         f.write("CLASSIFICATION REPORT\n")
         f.write("=" * 70 + "\n\n")
-        f.write(f"Validation Loss: {results[0]:.4f}\n")
-        f.write(f"Validation Accuracy: {results[1]:.4f}\n")
-        if len(results) > 2:
-            f.write(f"Top-3 Accuracy: {results[2]:.4f}\n")
+        f.write(f"Validation Loss:     {val_loss:.4f}\n")
+        f.write(f"Validation Accuracy: {val_acc:.4f}\n")
+        if top3_acc is not None:
+            f.write(f"Top-3 Accuracy:     {top3_acc:.4f}\n")
         f.write("\n" + "=" * 70 + "\n\n")
-        f.write(report)
-    print(f"\nClassification report saved to: {report_path}")
+        f.write(report_text)
+    print(f"\n✓ Classification report saved to: {report_path}")
 
-    # Generate visualizations
-    print("\nGenerating visualizations...")
-    plot_confusion_matrix(y_true, y_pred, class_names)
-    per_class_acc = plot_per_class_accuracy(y_true, y_pred, class_names)
-    plot_sample_predictions(model, val_generator, class_names)
+    # 6. Visual diagnostics
+    print("\n[6/6] Creating visualizations...")
 
-    # Identify best and worst performing classes
+    plot_confusion_matrix(
+        y_true=y_true,
+        y_pred=y_pred,
+        class_names=class_names,
+        save_path=save_path
+    )
+
+    per_class_acc = plot_per_class_accuracy(
+        y_true=y_true,
+        y_pred=y_pred,
+        class_names=class_names,
+        save_path=save_path
+    )
+
+    plot_sample_predictions(
+        model=model,
+        generator=val_generator,
+        class_names=class_names,
+        num_samples=16,
+        save_path=save_path
+    )
+
+    # best / worst classes
     print("\n" + "=" * 70)
     print("PERFORMANCE SUMMARY")
     print("=" * 70)
@@ -256,4 +314,13 @@ def evaluate_model(model_path='models/best_model.h5',
 
 
 if __name__ == "__main__":
-    evaluate_model()
+    # These defaults match what train.py used.
+    evaluate_model(
+        model_path='models/final_model.h5',
+        class_names_path='models/class_names.json',
+        data_dir='data/PlantVillage',
+        img_size=224,
+        batch_size=32,
+        validation_split=0.2,
+        save_path='models'
+    )
