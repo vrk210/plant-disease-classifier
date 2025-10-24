@@ -1,5 +1,3 @@
-
-
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.applications import EfficientNetB0, EfficientNetB3
@@ -7,20 +5,10 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 
 
-def create_model(num_classes, img_size=224, base_model_name='EfficientNetB0', trainable_layers=20):
+def create_model(num_classes, img_size=224, base_model_name='EfficientNetB0'):
     """
-    Create a transfer learning model for plant disease classification.
-
-    Args:
-        num_classes: Number of output classes
-        img_size: Input image size (default: 224)
-        base_model_name: Name of base model (default: 'EfficientNetB0')
-        trainable_layers: Number of layers to unfreeze for fine-tuning (default: 20)
-
-    Returns:
-        Compiled Keras model
+    Build transfer learning model with EfficientNet backbone.
     """
-    # Select base model
     if base_model_name == 'EfficientNetB0':
         base_model = EfficientNetB0(
             include_top=False,
@@ -36,19 +24,26 @@ def create_model(num_classes, img_size=224, base_model_name='EfficientNetB0', tr
     else:
         raise ValueError(f"Unsupported base model: {base_model_name}")
 
-    # Freeze base model initially
+    # Freeze base model for phase 1
     base_model.trainable = False
 
-    # Build model
     model = models.Sequential([
         base_model,
         layers.GlobalAveragePooling2D(),
         layers.BatchNormalization(),
         layers.Dropout(0.3),
-        layers.Dense(512, activation='relu'),
+        layers.Dense(
+            512,
+            activation='relu',
+            kernel_regularizer=tf.keras.regularizers.l2(0.01)
+        ),
         layers.BatchNormalization(),
         layers.Dropout(0.3),
-        layers.Dense(256, activation='relu'),
+        layers.Dense(
+            256,
+            activation='relu',
+            kernel_regularizer=tf.keras.regularizers.l2(0.01)
+        ),
         layers.Dropout(0.2),
         layers.Dense(num_classes, activation='softmax')
     ])
@@ -58,37 +53,26 @@ def create_model(num_classes, img_size=224, base_model_name='EfficientNetB0', tr
 
 def compile_model(model, learning_rate=0.001):
     """
-    Compile the model with optimizer and loss function.
-
-    Args:
-        model: Keras model to compile
-        learning_rate: Initial learning rate (default: 0.001)
-
-    Returns:
-        Compiled model
+    Compile for categorical classification of N plant disease classes.
     """
     model.compile(
         optimizer=Adam(learning_rate=learning_rate),
         loss='categorical_crossentropy',
-        metrics=['accuracy', tf.keras.metrics.TopKCategoricalAccuracy(k=3, name='top_3_accuracy')]
+        metrics=[
+            'accuracy',
+            tf.keras.metrics.TopKCategoricalAccuracy(
+                k=3, name='top_3_accuracy'
+            ),
+        ],
     )
-
     return model
 
 
-def get_callbacks(model_save_path='models/best_model.h5', patience=10):
+def get_callbacks(model_save_path='best_model.h5', patience=10):
     """
-    Create training callbacks.
-
-    Args:
-        model_save_path: Path to save best model (default: 'models/best_model.h5')
-        patience: Patience for early stopping (default: 10)
-
-    Returns:
-        List of callbacks
+    Checkpoint, early stopping, LR scheduler.
     """
-    callbacks = [
-        # Save best model
+    return [
         ModelCheckpoint(
             model_save_path,
             monitor='val_accuracy',
@@ -96,16 +80,12 @@ def get_callbacks(model_save_path='models/best_model.h5', patience=10):
             save_best_only=True,
             verbose=1
         ),
-
-        # Early stopping
         EarlyStopping(
             monitor='val_loss',
             patience=patience,
             restore_best_weights=True,
             verbose=1
         ),
-
-        # Reduce learning rate on plateau
         ReduceLROnPlateau(
             monitor='val_loss',
             factor=0.5,
@@ -115,60 +95,38 @@ def get_callbacks(model_save_path='models/best_model.h5', patience=10):
         )
     ]
 
-    return callbacks
-
 
 def unfreeze_model(model, num_layers_to_unfreeze=20):
     """
-    Unfreeze top layers of base model for fine-tuning.
-
-    Args:
-        model: Keras model
-        num_layers_to_unfreeze: Number of layers to unfreeze from the top
-
-    Returns:
-        Model with unfrozen layers
+    Phase 2 fine-tuning: unfreeze top N layers of EfficientNet.
     """
-    # Get base model (first layer)
-    base_model = model.layers[0]
-
-    # Unfreeze top layers
+    base_model = model.layers[0]  # The EfficientNet backbone
     base_model.trainable = True
 
-    # Freeze all layers except the last num_layers_to_unfreeze
+    # Freeze all but last N layers
     for layer in base_model.layers[:-num_layers_to_unfreeze]:
         layer.trainable = False
 
+    print("\n" + "=" * 70)
+    print("FINE-TUNING CONFIGURATION")
+    print("=" * 70)
     print(f"Unfroze {num_layers_to_unfreeze} layers for fine-tuning")
-    print(f"Total trainable parameters: {sum([tf.size(w).numpy() for w in model.trainable_weights])}")
 
-    return model
+    trainable_params = sum([tf.size(w).numpy() for w in model.trainable_weights])
+    non_trainable_params = sum([tf.size(w).numpy() for w in model.non_trainable_weights])
+    total_params = trainable_params + non_trainable_params
 
-
-def create_and_compile_model(num_classes, img_size=224, learning_rate=0.001):
-    """
-    Create and compile model in one step.
-
-    Args:
-        num_classes: Number of output classes
-        img_size: Input image size
-        learning_rate: Initial learning rate
-
-    Returns:
-        Compiled model ready for training
-    """
-    model = create_model(num_classes, img_size)
-    model = compile_model(model, learning_rate)
+    print(f"Trainable parameters:     {trainable_params:,}")
+    print(f"Non-trainable parameters: {non_trainable_params:,}")
+    print(f"Total parameters:         {total_params:,}")
+    print("=" * 70 + "\n")
 
     return model
 
 
 def print_model_summary(model):
     """
-    Print detailed model summary.
-
-    Args:
-        model: Keras model
+    Nice pretty summary with param counts.
     """
     print("\n" + "=" * 70)
     print("MODEL ARCHITECTURE")
@@ -181,21 +139,66 @@ def print_model_summary(model):
 
     trainable_count = sum([tf.size(w).numpy() for w in model.trainable_weights])
     non_trainable_count = sum([tf.size(w).numpy() for w in model.non_trainable_weights])
+    total = trainable_count + non_trainable_count
 
-    print(f"Trainable parameters: {trainable_count:,}")
+    print(f"Trainable parameters:     {trainable_count:,}")
     print(f"Non-trainable parameters: {non_trainable_count:,}")
-    print(f"Total parameters: {trainable_count + non_trainable_count:,}")
+    print(f"Total parameters:         {total:,}")
     print("=" * 70 + "\n")
 
 
-if __name__ == "__main__":
-    # Example: Create and display model
-    num_classes = 38
-    model = create_and_compile_model(num_classes)
-    print_model_summary(model)
+def create_and_compile_model(num_classes, img_size=224, learning_rate=0.001):
+    """
+    Convenience: build then compile.
+    """
+    model = create_model(num_classes=num_classes, img_size=img_size)
+    model = compile_model(model, learning_rate=learning_rate)
+    return model
 
-    # Example: Fine-tuning setup
-    print("\nSetting up for fine-tuning...")
+
+def train_model_two_phase(
+    model,
+    train_generator,
+    val_generator,
+    epochs_phase1=10,
+    epochs_phase2=20,
+    class_weights=None,
+):
+    """
+    Phase 1: train top classifier head (backbone frozen).
+    Phase 2: unfreeze last N backbone layers and fine-tune at lower LR.
+    """
+
+    callbacks = get_callbacks(patience=10)
+
+    print("\n===== PHASE 1: TRANSFER LEARNING (frozen base) =====")
+    history1 = model.fit(
+        train_generator,
+        validation_data=val_generator,
+        epochs=epochs_phase1,
+        callbacks=callbacks,
+        class_weight=class_weights,
+        verbose=1,
+    )
+
+    # Phase 2: unfreeze some of the EfficientNet base and fine-tune
+    print("\n===== PHASE 2: FINE-TUNING (unfreeze top layers) =====")
     model = unfreeze_model(model, num_layers_to_unfreeze=20)
-    model = compile_model(model, learning_rate=0.0001)
-    print_model_summary(model)
+
+    # lower LR for fine-tune
+    model = compile_model(model, learning_rate=1e-4)
+
+    callbacks_finetune = get_callbacks(
+        model_save_path='best_model_finetuned.h5', patience=7
+    )
+
+    history2 = model.fit(
+        train_generator,
+        validation_data=val_generator,
+        epochs=epochs_phase2,
+        callbacks=callbacks_finetune,
+        class_weight=class_weights,
+        verbose=1,
+    )
+
+    return (history1, history2), model
