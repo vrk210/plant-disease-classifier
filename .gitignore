@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Data
+data/
+*.csv
+*.zip
+*.tar.gz
+
+# Models
+models/*.h5
+models/*.hdf5
+models/*.pb
+models/*.ckpt
+*.weights
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.venv
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs
+training_history*.png
+confusion_matrix*.png
+sample_predictions.png
+per_class_accuracy.png
+classification_report.txt
+
+# Keep model directory but ignore models
+!models/.gitkeep
+
+# Keep data directory structure but ignore data
+!data/.gitkeep
